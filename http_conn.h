@@ -35,6 +35,7 @@ public:
         CHECK_STATE_REQUESTLINE:当前正在分析请求行
         CHECK_STATE_HEADER:当前正在分析头部字段
         CHECK_STATE_CONTENT:当前正在解析请求体
+        requestline -> header -> content
     */
     enum CHECK_STATE { CHECK_STATE_REQUESTLINE = 0, CHECK_STATE_HEADER, CHECK_STATE_CONTENT };
     
@@ -53,6 +54,12 @@ public:
     
     // 从状态机的三种可能状态，即行的读取状态，分别表示
     // 1.读取到一个完整的行 2.行出错 3.行数据尚且不完整
+    /*
+    new data arrived: OK -> OPEN
+    '/r/n' has been read: OPEN -> OK
+    didn't receive the whole request: OPEN -> OPEN
+    '/r' or '/n' appears alone in a http request: OPEN -> BAD
+    */
     enum LINE_STATUS { LINE_OK = 0, LINE_BAD, LINE_OPEN };
 public:
     http_conn(){}
@@ -70,8 +77,35 @@ public:
     static int m_user_count;    // number of users
 
 private:
+    void init(); // initialize the connection
+
+    HTTP_CODE process_read();    // process the http request
+
+    // called by process_read()
+    HTTP_CODE parse_request_line( char* text );
+    HTTP_CODE parse_headers( char* text );
+    HTTP_CODE parse_content( char* text );
+    HTTP_CODE do_request();
+    char* get_line() { return m_read_buf + m_start_line; }
+    LINE_STATUS parse_line();
+ 
+private:
     int m_sockfd;           // the socket fd & address that the http connects to
     sockaddr_in m_address;
+
+    char m_read_buf[ READ_BUFFER_SIZE ];    // 读缓冲区
+    int m_read_idx;                         // 标识读缓冲区中已经读入的客户端数据的最后一个字节的下一个位置
+    int m_checked_idx;                      // 当前正在分析的字符在读缓冲区中的位置
+    int m_start_line;                       // 当前正在解析的行的起始位置
+
+    CHECK_STATE m_check_state;              // 主状态机当前所处的状态
+    METHOD m_method;                        // 请求方法
+
+    char* m_url;                            // 客户请求的目标文件的文件名
+    char* m_version;                        // HTTP协议版本号，我们仅支持HTTP1.1
+    char* m_host;                           // 主机名
+    int m_content_length;                   // HTTP请求的消息总长度
+    bool m_linger;                          // HTTP请求是否要求保持连接
 };
 
 #endif
