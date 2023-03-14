@@ -91,8 +91,9 @@ void http_conn::close_conn() {
     if(m_sockfd != -1) {
         removefd(m_epollfd, m_sockfd);
         m_sockfd = -1;
-        m_user_count--; // 关闭一个连接，将客户总数量-1
+        m_user_count--;
     }
+    printf( "close fd %d\n", m_sockfd );
 }
 
 bool http_conn::read() {
@@ -117,14 +118,14 @@ bool http_conn::read() {
 }
 
 void http_conn::process() {
-    // 解析HTTP请求
+    // parse http request
     HTTP_CODE read_ret = process_read();
     if ( read_ret == NO_REQUEST ) {
         modfd( m_epollfd, m_sockfd, EPOLLIN );
         return;
     }
     
-    // 生成响应
+    // generate http response
     bool write_ret = process_write( read_ret );
     if ( !write_ret ) {
         close_conn();
@@ -144,7 +145,7 @@ http_conn::HTTP_CODE http_conn::process_read() {
         // get a line
         text = get_line();
         m_start_line = m_checked_idx;
-        printf( "got 1 http line: %s\n", text );
+        // printf( "got 1 http line: %s\n", text );
 
         switch ( m_check_state ) {
             case CHECK_STATE_REQUESTLINE: {
@@ -296,7 +297,7 @@ http_conn::HTTP_CODE http_conn::parse_headers( char* text ) {
         text += strspn( text, " \t" );
         m_host = text;
     } else {
-        printf( "oop! unknow header %s\n", text );
+        // printf( "oop! unknow header %s\n", text );
     }
     return NO_REQUEST;
 }
@@ -345,7 +346,7 @@ http_conn::HTTP_CODE http_conn::do_request()
     return FILE_REQUEST;
 }
 
-// 对内存映射区执行munmap操作
+// cancel m_file_address
 void http_conn::unmap() {
     if( m_file_address )
     {
@@ -383,12 +384,14 @@ bool http_conn::write() {
         bytes_have_send += temp;
         bytes_to_send -= temp;
 
+        // m_iv[0] has already been sent but m_iv[1] hasn't
         if (bytes_have_send >= m_iv[0].iov_len)
         {
             m_iv[0].iov_len = 0;
             m_iv[1].iov_base = m_file_address + (bytes_have_send - m_write_idx);
             m_iv[1].iov_len = bytes_to_send;
         }
+        // m_iv[0] hasn't been sent completely
         else
         {
             m_iv[0].iov_base = m_write_buf + bytes_have_send;
@@ -397,10 +400,11 @@ bool http_conn::write() {
 
         if (bytes_to_send <= 0)
         {
-            // 没有数据要发送了
+            // no data need to be sent
             unmap();
             modfd(m_epollfd, m_sockfd, EPOLLIN);
 
+            // keep-alive or not
             if (m_linger)
             {
                 init();
@@ -415,13 +419,24 @@ bool http_conn::write() {
     }
 }
 
-// 往写缓冲中写入待发送的数据
+/*
+va_list: used with variadic
+the operation principle is the caller and the callee stack
+the first parameter is at the lowest addressed byte of the stack
+https://www.jianshu.com/p/5634469190a3
+va_list: the char ptr
+va_start: find the first parameter's address
+va_arg: get the parameter from the higher addressed byte of the stack according the num
+va_end: empty the ptr
+*/
 bool http_conn::add_response( const char* format, ... ) {
     if( m_write_idx >= WRITE_BUFFER_SIZE ) {
         return false;
     }
     va_list arg_list;
     va_start( arg_list, format );
+    // int vsnprintf (char * sbuf, size_t n, const char * format, va_list arg );
+    // put the format str into sbuf, used with variadic
     int len = vsnprintf( m_write_buf + m_write_idx, WRITE_BUFFER_SIZE - 1 - m_write_idx, format, arg_list );
     if( len >= ( WRITE_BUFFER_SIZE - 1 - m_write_idx ) ) {
         return false;
